@@ -27,8 +27,9 @@ All detections are returned as alerts because weapons are high-priority events.
 
 ## Important Model Requirement
 
-Official YOLOv8 COCO weights do not provide reliable gun or knife classes. This
-module requires custom YOLOv8 weapon weights, for example:
+Official YOLOv8 COCO weights provide a `knife` class but do not provide reliable
+gun detection or small box-knife detection. For production accuracy, use custom
+YOLOv8 weapon weights, for example:
 
 ```text
 models/weapon_yolov8.pt
@@ -116,7 +117,7 @@ python -m unittest tests.test_weapon_detector
 
 ## Troubleshooting
 
-- `Weapon detector requires custom YOLOv8 weights`: set
+- `Weapon detector requires YOLOv8 weights`: set
   `ModelPathConfig(yolo_weapon_weights=Path("models/weapon_yolov8.pt"))`.
 - `Weapon model weights not found`: confirm the file path exists from the current
   working directory.
@@ -124,4 +125,3 @@ python -m unittest tests.test_weapon_detector
   Ultralytics YOLOv8.
 - No detections appear: inspect your model class names. If they differ, pass a
   custom `class_aliases` mapping in `WeaponDetectorConfig`.
-

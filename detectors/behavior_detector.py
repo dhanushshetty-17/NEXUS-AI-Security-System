@@ -156,6 +156,9 @@ class BehaviorDetector(VisionDetector):
         predict_kwargs: dict[str, Any] = {
             "conf": self.runtime.confidence_threshold,
             "iou": self.runtime.iou_threshold,
+            "imgsz": self.runtime.inference_size,
+            "max_det": self.runtime.max_detections,
+            "augment": self.runtime.test_time_augmentation,
             "verbose": False,
         }
         if self.runtime.device != "auto":

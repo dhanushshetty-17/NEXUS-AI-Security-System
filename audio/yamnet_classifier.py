@@ -26,9 +26,9 @@ EXPLOSION = "explosion"
 
 
 DEFAULT_AUDIO_THREAT_ALIASES: dict[str, tuple[str, ...]] = {
-    SCREAM: ("scream", "screaming"),
+    SCREAM: ("scream", "screaming", "shout", "yell", "crying"),
     GUNSHOT: ("gunshot", "gunfire"),
-    GLASS_BREAK: ("glass", "glass breaking", "breaking glass", "shatter"),
+    GLASS_BREAK: ("glass", "glass breaking", "breaking glass", "shatter", "smash"),
     EXPLOSION: ("explosion", "blast"),
 }
 
@@ -68,7 +68,7 @@ class YamNetClassifierConfig:
     """Configuration for the YAMNet classifier."""
 
     model_paths: ModelPathConfig = ModelPathConfig()
-    confidence_threshold: float = 0.25
+    confidence_threshold: float = 0.20
     aggregate: str = "max"
     threat_aliases: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: DEFAULT_AUDIO_THREAT_ALIASES.copy()
@@ -217,4 +217,3 @@ def prepare_waveform(waveform: np.ndarray) -> np.ndarray:
         array = array / peak
 
     return np.clip(array, -1.0, 1.0).astype(np.float32, copy=False)
-

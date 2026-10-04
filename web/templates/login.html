@@ -36,5 +36,13 @@
             </form>
         </div>
     </div>
+    <script>
+        document.querySelector('form[action="/login"]')?.addEventListener('submit', (event) => {
+            const button = event.currentTarget.querySelector('button[type="submit"]');
+            if (!button || button.disabled) return;
+            button.disabled = true;
+            button.textContent = 'AUTHENTICATING...';
+        });
+    </script>
 </body>
 </html>

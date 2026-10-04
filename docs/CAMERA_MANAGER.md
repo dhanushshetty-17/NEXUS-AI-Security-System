@@ -126,4 +126,3 @@ python -m unittest tests.test_camera_manager
 - If video files do not play, confirm OpenCV can read the codec.
 - If CPU usage is high, set `target_fps`, use smaller YOLO weights, or assign
   fewer detectors to each camera.
-

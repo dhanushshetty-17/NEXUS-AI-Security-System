@@ -268,7 +268,7 @@
                             </div>
                             <div class="form-group row">
                                 <label for="weapon_conf">Confidence Threshold (%)</label>
-                                <input type="number" id="weapon_conf" name="weapon_conf" min="0" max="100" value="{{ settings.get('weapon_conf', 50) }}">
+                                <input type="number" id="weapon_conf" name="weapon_conf" min="0" max="100" value="{{ settings.get('weapon_conf', 20) }}">
                             </div>
                         </div>
 
@@ -300,7 +300,7 @@
                             </div>
                             <div class="form-group row">
                                 <label for="audio_conf">Confidence Threshold (%)</label>
-                                <input type="number" id="audio_conf" name="audio_conf" min="0" max="100" value="{{ settings.get('audio_conf', 35) }}">
+                                <input type="number" id="audio_conf" name="audio_conf" min="0" max="100" value="{{ settings.get('audio_conf', 25) }}">
                             </div>
                         </div>
 
@@ -314,5 +314,13 @@
             </section>
         </main>
     </div>
+    <script>
+        document.querySelector('form[action="/settings"]')?.addEventListener('submit', (event) => {
+            const button = event.currentTarget.querySelector('button[type="submit"]');
+            if (!button || button.disabled) return;
+            button.disabled = true;
+            button.textContent = 'Saving...';
+        });
+    </script>
 </body>
 </html>

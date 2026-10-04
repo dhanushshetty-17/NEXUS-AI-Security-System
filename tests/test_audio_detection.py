@@ -8,23 +8,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import numpy as np  # noqa: E402
+try:
+    import numpy as np  # noqa: E402
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    np = None
+    _NUMPY_AVAILABLE = False
 
-from security_ai_system.audio.audio_sources import iter_audio_chunks  # noqa: E402
-from security_ai_system.audio.yamnet_classifier import (  # noqa: E402
-    GUNSHOT,
-    SCREAM,
-    AudioClassification,
-    YamNetClassifier,
-    YamNetClassifierConfig,
-    normalize_label,
-    prepare_waveform,
-)
-from security_ai_system.detectors.audio_detector import (  # noqa: E402
-    AudioThreatDetector,
-    AudioThreatDetectorConfig,
-)
-from security_ai_system.utils.types import Severity  # noqa: E402
+if _NUMPY_AVAILABLE:
+    from security_ai_system.audio.audio_sources import iter_audio_chunks  # noqa: E402
+    from security_ai_system.audio.yamnet_classifier import (  # noqa: E402
+        GUNSHOT,
+        SCREAM,
+        AudioClassification,
+        YamNetClassifier,
+        YamNetClassifierConfig,
+        normalize_label,
+        prepare_waveform,
+    )
+    from security_ai_system.detectors.audio_detector import (  # noqa: E402
+        AudioThreatDetector,
+        AudioThreatDetectorConfig,
+    )
+    from security_ai_system.utils.types import Severity  # noqa: E402
+else:
+    GUNSHOT = "gunshot"
+    SCREAM = "scream"
 
 
 class FakeClassifier:
@@ -51,6 +60,7 @@ class FakeClassifier:
         ]
 
 
+@unittest.skipUnless(_NUMPY_AVAILABLE, "numpy not installed")
 class AudioHelperTests(unittest.TestCase):
     def test_prepare_waveform_mixes_stereo_and_normalizes(self) -> None:
         stereo = np.array([[2.0, 0.0], [-2.0, 0.0]], dtype=np.float32)
@@ -72,6 +82,7 @@ class AudioHelperTests(unittest.TestCase):
         self.assertEqual(normalize_label("Gunshot, gunfire"), "gunshot gunfire")
 
 
+@unittest.skipUnless(_NUMPY_AVAILABLE, "numpy not installed")
 class YamNetClassifierMappingTests(unittest.TestCase):
     def test_raw_yamnet_scores_map_to_project_threats(self) -> None:
         classifier = YamNetClassifier(
@@ -99,6 +110,7 @@ class YamNetClassifierMappingTests(unittest.TestCase):
         self.assertEqual(matches, [])
 
 
+@unittest.skipUnless(_NUMPY_AVAILABLE, "numpy not installed")
 class AudioThreatDetectorTests(unittest.TestCase):
     def test_detector_converts_classification_to_alert(self) -> None:
         detector = AudioThreatDetector(

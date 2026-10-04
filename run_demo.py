@@ -17,11 +17,11 @@ from security_ai_system.alerts.alert_manager import AlertManager, AlertManagerCo
 from security_ai_system.ui.dashboard import run_dashboard
 from security_ai_system.utils.types import ModelPathConfig, RuntimeConfig
 
-def run_audio_capture(audio_detector, alert_manager):
+def run_audio_capture(audio_detector, alert_manager, stop_event: threading.Event | None = None):
     print("Starting audio capture from default microphone...")
     try:
         with MicrophoneAudioStream(chunk_seconds=1.0) as mic:
-            while True:
+            while stop_event is None or not stop_event.is_set():
                 chunk = mic.read(timeout=2.0)
                 if chunk is not None:
                     result = audio_detector.predict(chunk)
@@ -80,9 +80,9 @@ def main():
         from security_ai_system.detectors.weapon_detector import DEFAULT_WEAPON_ALIASES
         aliases = DEFAULT_WEAPON_ALIASES.copy()
         
-        # We map yolo_weapon_weights to the base yolov8m.pt to use its built-in 'knife' class for the demo
+        # Use YOLOv8's built-in 'knife' class for the demo fallback.
         weapon_config = WeaponDetectorConfig(
-            model_paths=ModelPathConfig(yolo_weapon_weights=Path("models/yolov8m.pt")),
+            model_paths=ModelPathConfig(yolo_weapon_weights=Path("yolov8m.pt")),
             class_aliases=aliases
         )
         weapon_runtime = RuntimeConfig(confidence_threshold=0.15) # Very sensitive for demo
@@ -95,7 +95,7 @@ def main():
     
     print("Loading audio detector...")
     audio_config = AudioThreatDetectorConfig(
-        classifier_config=YamNetClassifierConfig(confidence_threshold=0.35)
+        classifier_config=YamNetClassifierConfig(confidence_threshold=0.25)
     )
     audio_detector = AudioThreatDetector(camera_id="microphone-1", config=audio_config)
     audio_detector.load()

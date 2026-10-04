@@ -33,7 +33,7 @@ class AudioThreatDetectorConfig:
 
     sample_rate: int = YAMNET_SAMPLE_RATE
     classifier_config: YamNetClassifierConfig = field(default_factory=YamNetClassifierConfig)
-    alert_cooldown_sec: float = 2.0
+    alert_cooldown_sec: float = 1.0
 
 
 class AudioThreatDetector(BaseAudioDetector):

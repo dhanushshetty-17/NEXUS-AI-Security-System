@@ -2,7 +2,7 @@
 
 Important:
     Official YOLOv8 COCO weights do not provide reliable gun or knife classes.
-    This detector therefore requires a real custom `.pt` model trained/exported
+    This detector therefore works best with a custom `.pt` model trained/exported
     for Ultralytics YOLOv8 with classes such as `gun`, `pistol`, `rifle`, and
     `knife`.
 """
@@ -43,6 +43,9 @@ DEFAULT_WEAPON_ALIASES: dict[str, str] = {
     "firearm": FIREARM_CANONICAL,
     "knife": KNIFE_CANONICAL,
     "knives": KNIFE_CANONICAL,
+    "kitchen knife": KNIFE_CANONICAL,
+    "utility knife": KNIFE_CANONICAL,
+    "box cutter": KNIFE_CANONICAL,
 }
 
 
@@ -53,6 +56,8 @@ class WeaponDetectorConfig:
     model_paths: ModelPathConfig = ModelPathConfig()
     class_aliases: dict[str, str] = field(default_factory=lambda: DEFAULT_WEAPON_ALIASES.copy())
     snapshot_cooldown_sec: float = 10.0
+    detection_hold_frames: int = 5
+    small_object_tiles: bool = True
 
 
 class WeaponDetector(VisionDetector):
@@ -74,6 +79,8 @@ class WeaponDetector(VisionDetector):
         self.config = config or WeaponDetectorConfig()
         self._model: Any | None = None
         self._last_snapshot_at_by_label: dict[str, float] = {}
+        self._last_detections: list[Detection] = []
+        self._missed_detection_frames = 0
 
     def load(self) -> None:
         """Load the configured YOLOv8 weapon model."""
@@ -152,7 +159,7 @@ class WeaponDetector(VisionDetector):
         path = self.config.model_paths.yolo_weapon_weights
         if path is None:
             raise FileNotFoundError(
-                "Weapon detector requires custom YOLOv8 weights. "
+                "Weapon detector requires weapon weights. "
                 "Set ModelPathConfig(yolo_weapon_weights=Path('models/weapon_yolov8.pt'))."
             )
 
@@ -185,31 +192,54 @@ class WeaponDetector(VisionDetector):
         predict_kwargs: dict[str, Any] = {
             "conf": self.runtime.confidence_threshold,
             "iou": self.runtime.iou_threshold,
+            "imgsz": self.runtime.inference_size,
+            "max_det": self.runtime.max_detections,
+            "augment": self.runtime.test_time_augmentation,
             "verbose": False,
         }
         if self.runtime.device != "auto":
             predict_kwargs["device"] = self.runtime.device
 
         result = self._model.predict(frame, **predict_kwargs)[0]
-        names = result.names
-        detections: list[Detection] = []
+        detections = self._detections_from_result(result, 0, 0)
 
+        if not detections and self.config.small_object_tiles:
+            height, width = frame.shape[:2]
+            tile_width = max(1, int(width * 0.6))
+            tile_height = max(1, int(height * 0.6))
+            step_x = max(1, int(tile_width * 0.65))
+            step_y = max(1, int(tile_height * 0.65))
+            for top in range(0, max(1, height - tile_height + 1), step_y):
+                for left in range(0, max(1, width - tile_width + 1), step_x):
+                    tile = frame[top : min(top + tile_height, height), left : min(left + tile_width, width)]
+                    tile_result = self._model.predict(tile, **predict_kwargs)[0]
+                    detections.extend(self._detections_from_result(tile_result, left, top))
+            detections = self._deduplicate_detections(detections)
+
+        return self._stabilize_detections(detections)
+
+    def _detections_from_result(self, result: Any, offset_x: int, offset_y: int) -> list[Detection]:
+        """Convert one full-frame or tile inference result to project detections."""
+
+        detections: list[Detection] = []
         if result.boxes is None:
             return detections
-
         for box in result.boxes:
             class_id = int(box.cls[0].item())
-            source_label = str(names[class_id])
+            source_label = str(result.names[class_id])
             canonical = self._canonical_weapon_label(source_label)
             if canonical is None:
                 continue
-
             confidence = float(box.conf[0].item())
             x1, y1, x2, y2 = box.xyxy[0].tolist()
-            bbox = BoundingBox(int(x1), int(y1), int(x2), int(y2))
+            bbox = BoundingBox(
+                int(x1) + offset_x,
+                int(y1) + offset_y,
+                int(x2) + offset_x,
+                int(y2) + offset_y,
+            )
             if bbox.width <= 0 or bbox.height <= 0:
                 continue
-
             detections.append(
                 Detection(
                     label=self._display_label(canonical),
@@ -225,7 +255,52 @@ class WeaponDetector(VisionDetector):
                     },
                 )
             )
+        return detections
 
+    @staticmethod
+    def _deduplicate_detections(detections: list[Detection]) -> list[Detection]:
+        """Keep the highest-confidence box when overlapping tiles find the same object."""
+
+        selected: list[Detection] = []
+        for detection in sorted(detections, key=lambda item: item.confidence, reverse=True):
+            if detection.bbox is None:
+                continue
+            if any(
+                existing.bbox is not None
+                and WeaponDetector._box_iou(detection.bbox, existing.bbox) >= 0.5
+                for existing in selected
+            ):
+                continue
+            selected.append(detection)
+        return selected
+
+    @staticmethod
+    def _box_iou(first: BoundingBox, second: BoundingBox) -> float:
+        """Return intersection-over-union for two pixel-space boxes."""
+
+        intersection_width = max(0, min(first.x2, second.x2) - max(first.x1, second.x1))
+        intersection_height = max(0, min(first.y2, second.y2) - max(first.y1, second.y1))
+        intersection = intersection_width * intersection_height
+        union = first.width * first.height + second.width * second.height - intersection
+        return intersection / union if union else 0.0
+
+    def _stabilize_detections(self, detections: list[Detection]) -> list[Detection]:
+        """Hold a recent detection briefly through transient model misses."""
+
+        if detections:
+            self._last_detections = detections
+            self._missed_detection_frames = 0
+            return detections
+
+        if (
+            self._last_detections
+            and self._missed_detection_frames < self.config.detection_hold_frames
+        ):
+            self._missed_detection_frames += 1
+            return self._last_detections
+
+        self._last_detections = []
+        self._missed_detection_frames = 0
         return detections
 
     def _canonical_weapon_label(self, label: str) -> str | None:
@@ -234,7 +309,7 @@ class WeaponDetector(VisionDetector):
 
     @staticmethod
     def _normalize_label(label: str) -> str:
-        normalized = label.strip().lower().replace("-", " ").replace("_", " ")
+        normalized = re.sub(r"[^a-z0-9]+", " ", label.strip().lower())
         return re.sub(r"\s+", " ", normalized)
 
     @staticmethod
@@ -278,4 +353,3 @@ class WeaponDetector(VisionDetector):
             self._last_snapshot_at_by_label[display_label] = timestamp
             return str(path)
         return None
-

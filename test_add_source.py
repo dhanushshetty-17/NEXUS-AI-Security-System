@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 # Setup path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from security_ai_system.cameras.camera_manager import CameraManager, CameraSourceConfig, infer_source_type
 from security_ai_system.detectors.bag_detector import BagDetector
@@ -48,6 +48,7 @@ def test_add_source():
     worker.start()
     
     print("Successfully added source")
+    worker.stop()
 
 if __name__ == "__main__":
     test_add_source()

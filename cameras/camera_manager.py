@@ -84,6 +84,7 @@ class CameraStatus:
     source: str
     running: bool
     connected: bool
+    models_ready: bool
     fps: float
     frame_count: int
     last_error: str | None = None
@@ -183,13 +184,16 @@ class CameraWorker:
             maxsize=config.result_queue_size
         )
         self._stop_event = threading.Event()
+        self._startup_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._detector_load_thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._reader: FrameReader | None = None
         self._latest_frame: FramePacket | None = None
         self._latest_result: CameraPipelineResult | None = None
         self._running = False
         self._connected = False
+        self._models_ready = False
         self._fps = 0.0
         self._frame_count = 0
         self._last_error: str | None = None
@@ -201,6 +205,7 @@ class CameraWorker:
             return
 
         self._stop_event.clear()
+        self._startup_event.clear()
         self._thread = threading.Thread(
             target=self._run,
             name=f"CameraWorker-{self.config.camera_id}",
@@ -209,13 +214,26 @@ class CameraWorker:
         )
         self._thread.start()
 
+    def wait_until_started(self, timeout: float = 5.0) -> bool:
+        """Wait for source initialization and report whether it connected."""
+
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        if not self._startup_event.wait(timeout=timeout):
+            return False
+        with self._lock:
+            return self._connected
+
     def stop(self, timeout: float = 5.0) -> None:
         """Stop the camera worker and release resources."""
 
         self._stop_event.set()
+        self._startup_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
-        if self._reader is not None:
+        if self._detector_load_thread is not None:
+            self._detector_load_thread.join(timeout=timeout)
+        if self._reader is not None and not self._thread.is_alive():
             self._reader.release()
             self._reader = None
         for detector in self.detectors:
@@ -223,6 +241,7 @@ class CameraWorker:
         with self._lock:
             self._running = False
             self._connected = False
+            self._models_ready = False
 
     def read_frame(self, timeout: float = 0.0) -> FramePacket | None:
         """Read the next queued raw frame."""
@@ -249,6 +268,7 @@ class CameraWorker:
                 source=str(self.config.source),
                 running=self._running,
                 connected=self._connected,
+                models_ready=self._models_ready,
                 fps=self._fps,
                 frame_count=self._frame_count,
                 last_error=self._last_error,
@@ -262,58 +282,86 @@ class CameraWorker:
         try:
             self._reader = self.reader_factory(self.config)
             self._reader.open()
-            if load_detectors:
-                self._load_detectors()
             with self._lock:
                 self._connected = True
+                self._models_ready = not load_detectors or not self.detectors
         except Exception as exc:
+            if self._reader is not None:
+                self._reader.release()
+                self._reader = None
             with self._lock:
                 self._last_error = str(exc)
                 self._running = False
                 self._connected = False
+                self._models_ready = False
+            self._startup_event.set()
             return
+
+        self._startup_event.set()
+
+        if load_detectors and self.detectors:
+            self._detector_load_thread = threading.Thread(
+                target=self._load_detectors_background,
+                name=f"DetectorLoader-{self.config.camera_id}",
+                daemon=True,
+            )
+            self._detector_load_thread.start()
 
         last_frame_time: float | None = None
         read_failures = 0
 
-        while not self._stop_event.is_set():
-            ok, frame = self._safe_read()
-            if not ok or frame is None:
-                read_failures += 1
-                if read_failures >= self.config.read_failures_before_reconnect:
-                    if not self._restart_reader():
-                        self._stop_event.wait(self.config.reconnect_delay_sec)
-                    read_failures = 0
-                continue
+        try:
+            while not self._stop_event.is_set():
+                ok, frame = self._safe_read()
+                if not ok or frame is None:
+                    read_failures += 1
+                    if read_failures >= self.config.read_failures_before_reconnect:
+                        if not self._restart_reader():
+                            self._stop_event.wait(self.config.reconnect_delay_sec)
+                        read_failures = 0
+                    continue
 
-            read_failures = 0
-            timestamp = time.time()
-            fps = self._update_fps(timestamp, last_frame_time)
-            last_frame_time = timestamp
-            self._frame_count += 1
+                read_failures = 0
+                timestamp = time.time()
+                fps = self._update_fps(timestamp, last_frame_time)
+                last_frame_time = timestamp
+                self._frame_count += 1
 
-            packet = FramePacket(
-                camera_id=self.config.camera_id,
-                timestamp=timestamp,
-                frame=frame,
-                frame_index=self._frame_count,
-                fps=fps,
-            )
-            self._publish_frame(packet)
-            result = self._process_packet(packet)
-            self._publish_result(result)
-            self._sleep_for_target_fps(last_frame_time)
+                packet = FramePacket(
+                    camera_id=self.config.camera_id,
+                    timestamp=timestamp,
+                    frame=frame,
+                    frame_index=self._frame_count,
+                    fps=fps,
+                )
+                self._publish_frame(packet)
+                result = self._process_packet(packet)
+                self._publish_result(result)
+                self._sleep_for_target_fps(last_frame_time)
+        except Exception as exc:
+            with self._lock:
+                self._last_error = str(exc)
 
         if self._reader is not None:
             self._reader.release()
         with self._lock:
             self._running = False
             self._connected = False
+            self._models_ready = False
 
     def _load_detectors(self) -> None:
         for detector in self.detectors:
             if not detector.is_loaded:
-                detector.load()
+                try:
+                    detector.load()
+                except Exception as exc:
+                    with self._lock:
+                        self._last_error = str(exc)
+
+    def _load_detectors_background(self) -> None:
+        self._load_detectors()
+        with self._lock:
+            self._models_ready = all(detector.is_loaded for detector in self.detectors)
 
     def _safe_read(self) -> tuple[bool, Any | None]:
         try:
@@ -351,6 +399,9 @@ class CameraWorker:
         error: str | None = None
 
         for detector in self.detectors:
+            if not detector.is_loaded:
+                error = "AI models are still loading"
+                continue
             try:
                 result = detector.predict(display_frame, timestamp=packet.timestamp)
             except Exception as exc:

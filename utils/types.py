@@ -106,6 +106,9 @@ class RuntimeConfig:
     device: str = "auto"
     confidence_threshold: float = 0.35
     iou_threshold: float = 0.45
+    inference_size: int = 960
+    max_detections: int = 100
+    test_time_augmentation: bool = False
     save_snapshots: bool = True
     output_dir: Path = Path("outputs")
 

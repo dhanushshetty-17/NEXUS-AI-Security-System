@@ -46,8 +46,8 @@ NEXUS is built with a highly modular, decoupled architecture:
 You must run this on **Python 3.10+**. We strongly recommend using a virtual environment.
 
 ```powershell
-# Clone and enter the repository
-cd Ai_Security_System\security_ai_system
+# Enter the repository directory
+cd security_ai_system
 
 # Create and activate a virtual environment
 py -3.10 -m venv .venv

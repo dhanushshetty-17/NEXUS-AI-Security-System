@@ -26,6 +26,7 @@ class WeaponDetectorTests(unittest.TestCase):
         self.assertEqual(detector._canonical_weapon_label("Pistol"), FIREARM_CANONICAL)
         self.assertEqual(detector._canonical_weapon_label("rifle"), FIREARM_CANONICAL)
         self.assertEqual(detector._canonical_weapon_label("knife"), KNIFE_CANONICAL)
+        self.assertEqual(detector._canonical_weapon_label("Kitchen-Knife"), KNIFE_CANONICAL)
 
         self.assertEqual(detector._display_label(FIREARM_CANONICAL), "GUN DETECTED")
         self.assertEqual(detector._display_label(KNIFE_CANONICAL), "KNIFE DETECTED")
@@ -35,6 +36,27 @@ class WeaponDetectorTests(unittest.TestCase):
     def test_unknown_model_class_is_ignored(self) -> None:
         detector = WeaponDetector(camera_id="cam-test")
         self.assertIsNone(detector._canonical_weapon_label("cell phone"))
+
+    def test_transient_misses_hold_recent_detection(self) -> None:
+        detector = WeaponDetector(camera_id="cam-test")
+        detection = object()
+        detector._last_detections = [detection]  # type: ignore[list-item]
+
+        for _ in range(5):
+            self.assertEqual(detector._stabilize_detections([]), [detection])
+
+        self.assertEqual(detector._stabilize_detections([]), [])
+
+    def test_box_iou(self) -> None:
+        from security_ai_system.utils.types import BoundingBox
+
+        self.assertAlmostEqual(
+            WeaponDetector._box_iou(
+                BoundingBox(0, 0, 10, 10),
+                BoundingBox(0, 0, 10, 10),
+            ),
+            1.0,
+        )
 
     def test_missing_weapon_weights_raise_clear_error(self) -> None:
         detector = WeaponDetector(camera_id="cam-test")
@@ -53,7 +75,7 @@ class WeaponDetectorTests(unittest.TestCase):
                 detector._resolve_weapon_weights()
 
     def test_existing_pt_weapon_weights_are_accepted(self) -> None:
-        fake_weights = Path("models/weapon.pt")
+        fake_weights = Path("models/weapon_yolov8.pt")
         config = WeaponDetectorConfig(
             model_paths=ModelPathConfig(yolo_weapon_weights=fake_weights)
         )

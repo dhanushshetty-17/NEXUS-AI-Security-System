@@ -1,6 +1,14 @@
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 import threading
+from typing import Any
+
+try:
+    import numpy as np
+    from sklearn.metrics.pairwise import cosine_similarity
+    _REID_AVAILABLE = True
+except ImportError:
+    np = None
+    cosine_similarity = None
+    _REID_AVAILABLE = False
 
 class GlobalReIDManager:
     """
@@ -10,17 +18,21 @@ class GlobalReIDManager:
     def __init__(self, similarity_threshold: float = 0.7):
         self.similarity_threshold = similarity_threshold
         # Maps global_id (str) to a numpy array representing the moving average of their embedding
-        self.gallery: dict[str, np.ndarray] = {}
+        self.gallery: dict[str, Any] = {}
         self._next_id = 1
         self._lock = threading.Lock()
 
-    def assign_global_id(self, features: np.ndarray) -> str:
+    def assign_global_id(self, features: Any) -> str:
         """
         Takes a feature vector (e.g. from DeepSORT) and returns a matching global ID.
         If no match is found above the threshold, creates a new one.
         """
+        if not _REID_AVAILABLE:
+            with self._lock:
+                return self._create_new_id(features)
+
         # DeepSORT sometimes returns a list of features, we'll take the mean if it's 2D
-        if len(features.shape) > 1:
+        if hasattr(features, "shape") and len(features.shape) > 1:
             features = np.mean(features, axis=0)
             
         features = features.reshape(1, -1)
@@ -35,7 +47,7 @@ class GlobalReIDManager:
             
             similarities = cosine_similarity(features, gallery_matrix)[0]
             
-            best_idx = np.argmax(similarities)
+            best_idx = int(np.argmax(similarities))
             best_score = similarities[best_idx]
 
             if best_score >= self.similarity_threshold:
@@ -47,8 +59,9 @@ class GlobalReIDManager:
             else:
                 return self._create_new_id(features)
 
-    def _create_new_id(self, features: np.ndarray) -> str:
+    def _create_new_id(self, features: Any) -> str:
         new_id = f"G-{self._next_id:03d}"
-        self.gallery[new_id] = features[0]
+        if _REID_AVAILABLE and hasattr(features, "__getitem__"):
+            self.gallery[new_id] = features[0] if len(features.shape) > 1 else features
         self._next_id += 1
         return new_id

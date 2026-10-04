@@ -53,6 +53,11 @@ class FakeReader(FrameReader):
         self.released = True
 
 
+class FailingReader(FakeReader):
+    def open(self) -> None:
+        raise RuntimeError("source unavailable")
+
+
 class FakeDetector(VisionDetector):
     metadata = DetectorMetadata(
         name="Fake Vision Detector",
@@ -166,6 +171,22 @@ class CameraManagerTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             manager.add_camera(config)
+
+    def test_worker_reports_startup_failure(self) -> None:
+        manager = CameraManager()
+        worker = manager.add_camera(
+            CameraSourceConfig("cam-failing", 0),
+            reader_factory=lambda config: FailingReader([]),
+        )
+
+        worker.start()
+
+        self.assertFalse(worker.wait_until_started(timeout=1.0))
+        self.assertEqual(worker.status().last_error, "source unavailable")
+
+        manager.remove_camera("cam-failing")
+        with self.assertRaises(KeyError):
+            manager.get_worker("cam-failing")
 
 
 if __name__ == "__main__":

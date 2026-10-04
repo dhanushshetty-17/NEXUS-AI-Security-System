@@ -109,4 +109,3 @@ python -m unittest tests.test_dashboard_helpers
 - If the UI is slow, set `target_fps` lower in `CameraSourceConfig` or use
   smaller YOLO weights.
 - If no events appear, confirm detectors are attached to the camera manager.
-

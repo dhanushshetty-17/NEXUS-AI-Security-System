@@ -8,6 +8,7 @@ import the module.
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -445,7 +446,7 @@ def build_basic_camera_manager(sources: list[str]) -> CameraManager:
     """Build a camera manager populated with vision detectors and ReID."""
 
     from security_ai_system.cameras import CameraSourceConfig, infer_source_type, CameraSourceType
-    from security_ai_system.detectors.bag_detector import BagDetector
+    from security_ai_system.detectors.bag_detector import BagDetector, BagDetectorConfig
     from security_ai_system.detectors.weapon_detector import WeaponDetector, WeaponDetectorConfig
     from security_ai_system.detectors.behavior_detector import BehaviorDetector, BehaviorDetectorConfig
     from security_ai_system.trackers.tracker import DeepSortTracker
@@ -454,6 +455,7 @@ def build_basic_camera_manager(sources: list[str]) -> CameraManager:
     from pathlib import Path
 
     manager = CameraManager()
+    project_root = Path(__file__).resolve().parents[1]
     if not sources:
         sources = ["0"]
         
@@ -467,19 +469,43 @@ def build_basic_camera_manager(sources: list[str]) -> CameraManager:
         
         # Share the ReID manager across all camera trackers
         tracker = DeepSortTracker(reid_manager=reid_manager)
-        bag_detector = BagDetector(camera_id=camera_id, tracker=tracker)
+        bag_detector = BagDetector(
+            camera_id=camera_id,
+            tracker=tracker,
+            config=BagDetectorConfig(
+                model_paths=ModelPathConfig(
+                    yolo_object_weights=project_root / "yolov8m.pt",
+                )
+            ),
+        )
         
         # Add WeaponDetector using the standard YOLOv8m model as a fallback for knife detection
-        weapon_detector_config = WeaponDetectorConfig(
-            model_paths=ModelPathConfig(yolo_weapon_weights=Path("models/yolov8m.pt"))
+        configured_weapon_path = os.getenv("WEAPON_MODEL_PATH", "").strip()
+        weapon_weights = (
+            Path(configured_weapon_path)
+            if configured_weapon_path
+            else project_root / "models" / "weapon_yolov8.pt"
         )
-        weapon_detector = WeaponDetector(camera_id=camera_id, config=weapon_detector_config)
-        
-        detectors = [bag_detector, weapon_detector]
+        if not weapon_weights.is_absolute():
+            weapon_weights = project_root / weapon_weights
+        if not weapon_weights.exists():
+            # The COCO checkpoint contains a knife class, but no firearm classes.
+            # It is a useful fallback for knife detection only.
+            weapon_weights = project_root / "yolov8m.pt"
+        weapon_detector_config = WeaponDetectorConfig(
+            model_paths=ModelPathConfig(yolo_weapon_weights=weapon_weights)
+        )
+        detectors = [bag_detector]
+        if weapon_weights.exists():
+            detectors.append(
+                WeaponDetector(camera_id=camera_id, config=weapon_detector_config)
+            )
         
         if source_type != CameraSourceType.VIDEO_FILE:
             behavior_config = BehaviorDetectorConfig(
-                model_paths=ModelPathConfig(yolo_pose_weights=Path("models/yolov8m-pose.pt"))
+                model_paths=ModelPathConfig(
+                    yolo_pose_weights=project_root / "yolov8m-pose.pt"
+                )
             )
             behavior_detector = BehaviorDetector(camera_id=camera_id, config=behavior_config)
             detectors.append(behavior_detector)
@@ -517,4 +543,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

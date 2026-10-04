@@ -65,7 +65,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.web:
         import uvicorn
         import threading
-        import time
         from security_ai_system.ui.dashboard import build_basic_camera_manager
         from security_ai_system.web.app import app
         from security_ai_system.alerts.alert_manager import AlertManager, AlertManagerConfig
@@ -79,48 +78,50 @@ def main(argv: list[str] | None = None) -> int:
         
         # Audio thread
         audio_config = AudioThreatDetectorConfig(
-            classifier_config=YamNetClassifierConfig(confidence_threshold=0.35)
+            classifier_config=YamNetClassifierConfig(confidence_threshold=0.25)
         )
         audio_detector = AudioThreatDetector(camera_id="microphone-1", config=audio_config)
         audio_detector.load()
         
+        stop_event = threading.Event()
         audio_thread = threading.Thread(
             target=run_audio_capture,
-            args=(audio_detector, alert_manager),
+            args=(audio_detector, alert_manager, stop_event),
             daemon=True
         )
         audio_thread.start()
 
         # Video Alert polling thread for Web
         def poll_video_alerts():
-            while True:
-                for worker in manager.workers():
-                    while True:
-                        result = worker.read_result(timeout=0.0)
-                        if result is None:
-                            break
-                        # Handle camera alerts
-                        events = alert_manager.handle_camera_result(result)
-                        # Drain audio alerts
-                        if app.state.settings.get("audio_enabled", True):
-                            if alert_manager._audio_event_queue:
-                                events.extend(alert_manager._audio_event_queue)
+            while not stop_event.is_set():
+                try:
+                    for worker in manager.workers():
+                        while True:
+                            result = worker.read_result(timeout=0.0)
+                            if result is None:
+                                break
+                            events = alert_manager.handle_camera_result(result)
+                            if app.state.settings.get("audio_enabled", True):
+                                if alert_manager._audio_event_queue:
+                                    events.extend(alert_manager._audio_event_queue)
+                                    alert_manager._audio_event_queue.clear()
+                            else:
                                 alert_manager._audio_event_queue.clear()
-                        else:
-                            alert_manager._audio_event_queue.clear()
-                        
-                        # Send Telegram notifications for high-priority events
-                        telegram = getattr(app.state, "telegram_notifier", None)
-                        if telegram and telegram.enabled:
-                            for evt in events:
-                                if evt.threat_level in ("HIGH", "CRITICAL"):
-                                    telegram.send_alert(
-                                        camera_id=evt.camera_id,
-                                        label=evt.label,
-                                        threat_level=evt.threat_level,
-                                        snapshot_path=evt.snapshot_path,
-                                    )
-                time.sleep(0.1)
+
+                            telegram = getattr(app.state, "telegram_notifier", None)
+                            if telegram and telegram.enabled:
+                                for evt in events:
+                                    if evt.threat_level in ("HIGH", "CRITICAL"):
+                                        telegram.send_alert(
+                                            camera_id=evt.camera_id,
+                                            label=evt.label,
+                                            threat_level=evt.threat_level,
+                                            snapshot_path=evt.snapshot_path,
+                                        )
+                    stop_event.wait(0.1)
+                except Exception:
+                    logger.exception("Video alert polling failed")
+                    stop_event.wait(1.0)
 
         polling_thread = threading.Thread(target=poll_video_alerts, daemon=True)
         polling_thread.start()
@@ -132,8 +133,13 @@ def main(argv: list[str] | None = None) -> int:
         app.state.project_root = str(PROJECT_ROOT)
 
         logger.info("Starting web dashboard on http://127.0.0.1:8000")
-        uvicorn.run(app, host="127.0.0.1", port=8000)
-        manager.stop_all()
+        try:
+            uvicorn.run(app, host="127.0.0.1", port=8000)
+        finally:
+            stop_event.set()
+            manager.stop_all()
+            polling_thread.join(timeout=2.0)
+            audio_thread.join(timeout=2.0)
         return 0
 
     logger.info("AI Smart Surveillance foundation is ready.")

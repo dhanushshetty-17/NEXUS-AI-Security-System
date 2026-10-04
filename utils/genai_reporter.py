@@ -3,13 +3,20 @@ import json
 import time
 import threading
 from pathlib import Path
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-from google import genai
-from google.genai import types
-
-# Load environment variables (e.g. GEMINI_API_KEY)
-load_dotenv()
+try:
+    from google import genai
+    from google.genai import types
+    _GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    types = None
+    _GENAI_AVAILABLE = False
 
 class GenAIReporter:
     """
@@ -21,9 +28,13 @@ class GenAIReporter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.api_key = os.getenv("GEMINI_API_KEY")
-        if self.api_key and self.api_key != "your_google_gemini_api_key_here":
-            self.client = genai.Client(api_key=self.api_key)
-            self.enabled = True
+        if _GENAI_AVAILABLE and self.api_key and self.api_key != "your_google_gemini_api_key_here":
+            try:
+                self.client = genai.Client(api_key=self.api_key)
+                self.enabled = True
+            except Exception:
+                self.client = None
+                self.enabled = False
         else:
             self.client = None
             self.enabled = False
